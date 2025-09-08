@@ -19,9 +19,10 @@ class ContactoService:
         self.db = db
     
     def crear_contacto(self, nombre: str, tipo, pais: str = None, 
-                      email: str = None, telefono: str = None,
+                      provincia: str = None, email: str = None, telefono: str = None,
                       razon_social: str = None, direccion_fiscal: str = None,
-                      cuit: str = None, ein: str = None):
+                      numero_identificacion_fiscal: str = None, industria = None,
+                      direccion_fabrica: str = None, puerto_conveniente: str = None):
         """Crea un nuevo contacto con campos adicionales para facturación"""
         from models import Contacto
         
@@ -30,12 +31,15 @@ class ContactoService:
                 nombre=nombre,
                 tipo=tipo,
                 pais=pais,
+                provincia=provincia,
                 email=email,
                 telefono=telefono,
                 razon_social=razon_social,
                 direccion_fiscal=direccion_fiscal,
-                cuit=cuit,
-                ein=ein
+                numero_identificacion_fiscal=numero_identificacion_fiscal,
+                industria=industria,
+                direccion_fabrica=direccion_fabrica,
+                puerto_conveniente=puerto_conveniente
             )
             self.db.add(contacto)
             self.db.commit()
@@ -680,6 +684,62 @@ class FacturaService:
             logging.error(f"Error al generar factura: {str(e)}")
             raise
     
+    def generar_factura_personalizada(self, operacion_id: int, numero: str, 
+                                     fecha_factura: date, subtotal_fob: float, 
+                                     total_incoterm: float, moneda: str = "USD",
+                                     descripcion: str = "", observaciones: str = ""):
+        """Genera una factura con datos personalizados"""
+        from models import Factura, Operacion
+        
+        try:
+            operacion = self.db.query(Operacion).filter(Operacion.id == operacion_id).first()
+            if not operacion:
+                raise ValueError("Operación no encontrada")
+                
+            # Validar fecha HBL
+            if hasattr(operacion, 'fecha_hbl') and operacion.fecha_hbl:
+                if fecha_factura >= operacion.fecha_hbl:
+                    raise ValueError(f"La fecha de factura debe ser anterior al HBL ({operacion.fecha_hbl})")
+            
+            # Verificar que no exista ya una factura para esta operación
+            factura_existente = self.db.query(Factura).filter(
+                Factura.operacion_id == operacion_id
+            ).first()
+            
+            if factura_existente:
+                raise ValueError(f"Ya existe una factura para esta operación: {factura_existente.numero}")
+            
+            # Verificar que el número de factura no exista
+            numero_existente = self.db.query(Factura).filter(
+                Factura.numero == numero
+            ).first()
+            
+            if numero_existente:
+                raise ValueError(f"Ya existe una factura con el número: {numero}")
+            
+            factura = Factura(
+                numero=numero,
+                fecha=fecha_factura,
+                operacion_id=operacion_id,
+                subtotal_fob=subtotal_fob,
+                total_incoterm=total_incoterm,
+                moneda=moneda,
+                descripcion=descripcion,
+                observaciones=observaciones
+            )
+            
+            self.db.add(factura)
+            self.db.commit()
+            self.db.refresh(factura)
+            logging.info(f"Factura personalizada generada: {factura.numero}")
+            
+            return factura
+            
+        except Exception as e:
+            self.db.rollback()
+            logging.error(f"Error al generar factura personalizada: {str(e)}")
+            raise
+
     def obtener_facturas(self):
         """Obtiene todas las facturas"""
         from models import Factura
@@ -693,3 +753,52 @@ class FacturaService:
         return self.db.query(Factura).filter(
             Factura.operacion_id == operacion_id
         ).first()
+
+def migrate_database_fields():
+    """Migra campos nuevos en la base de datos"""
+    from sqlalchemy import create_engine, text
+    
+    DATABASE_URL = "sqlite:///comercio.db"
+    engine = create_engine(DATABASE_URL)
+    
+    with engine.connect() as conn:
+        try:
+            # Verificar si las columnas ya existen en contactos
+            result = conn.execute(text("PRAGMA table_info(contactos)"))
+            columns = [row[1] for row in result.fetchall()]
+            
+            # Agregar campos nuevos a contactos si no existen
+            new_fields = {
+                "provincia": "VARCHAR(100)",
+                "numero_identificacion_fiscal": "VARCHAR(50)",
+                "industria": "VARCHAR(50)",
+                "direccion_fabrica": "VARCHAR(500)",
+                "puerto_conveniente": "VARCHAR(200)"
+            }
+            
+            for field, field_type in new_fields.items():
+                if field not in columns:
+                    conn.execute(text(f"ALTER TABLE contactos ADD COLUMN {field} {field_type}"))
+                    logging.info(f"Agregada columna {field} a contactos")
+            
+            # Verificar si las columnas ya existen en facturas
+            result = conn.execute(text("PRAGMA table_info(facturas)"))
+            columns = [row[1] for row in result.fetchall()]
+            
+            # Agregar campos nuevos a facturas si no existen
+            factura_fields = {
+                "descripcion": "VARCHAR(1000)",
+                "observaciones": "VARCHAR(1000)"
+            }
+            
+            for field, field_type in factura_fields.items():
+                if field not in columns:
+                    conn.execute(text(f"ALTER TABLE facturas ADD COLUMN {field} {field_type}"))
+                    logging.info(f"Agregada columna {field} a facturas")
+            
+            conn.commit()
+            logging.info("Migración de campos completada exitosamente")
+            
+        except Exception as e:
+            logging.error(f"Error en migración: {str(e)}")
+            conn.rollback()
