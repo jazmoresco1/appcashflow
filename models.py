@@ -13,6 +13,22 @@ class TipoContacto(enum.Enum):
     CLIENTE = "cliente"
     AGENTE_LOGISTICO = "agente_logistico"
 
+class Industria(enum.Enum):
+    AGRICOLA = "agricola"
+    CONSTRUCCION = "construccion"
+    TEXTIL = "textil"
+    ALIMENTARIA = "alimentaria"
+    AUTOMOTRIZ = "automotriz"
+    TECNOLOGIA = "tecnologia"
+    ENERGIA = "energia"
+    FARMACEUTICA = "farmaceutica"
+    QUIMICA = "quimica"
+    METALURGICA = "metalurgica"
+    MINERIA = "mineria"
+    MADERERA = "maderera"
+    PLASTICA = "plastica"
+    OTRA = "otra"
+
 class IncotermCompra(enum.Enum):
     FOB = "FOB"
     FCA = "FCA"
@@ -43,12 +59,15 @@ class Contacto(Base):
     nombre = Column(String(200), nullable=False)
     tipo = Column(Enum(TipoContacto), nullable=False)
     pais = Column(String(100))
+    provincia = Column(String(100))  # Nuevo campo para provincia
     email = Column(String(200))
     telefono = Column(String(50))
     razon_social = Column(String(200))
     direccion_fiscal = Column(String(500))
-    cuit = Column(String(50))
-    ein = Column(String(50))
+    numero_identificacion_fiscal = Column(String(50))  # Reemplaza CUIT y EIN
+    industria = Column(Enum(Industria))  # Nuevo campo para industria del cliente
+    direccion_fabrica = Column(String(500))  # Nuevo campo para proveedores
+    puerto_conveniente = Column(String(200))  # Nuevo campo para proveedores
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     
     # Relaciones
@@ -187,6 +206,8 @@ class Factura(Base):
     subtotal_fob = Column(Float, nullable=False)
     total_incoterm = Column(Float, nullable=False)
     moneda = Column(String(10), default="USD")
+    descripcion = Column(String(1000))  # Descripción de productos/servicios
+    observaciones = Column(String(1000))  # Observaciones adicionales
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     
     # Relación
