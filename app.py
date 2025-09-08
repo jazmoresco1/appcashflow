@@ -7,7 +7,7 @@ from decimal import Decimal
 from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 from models import (
-    init_database, get_db, TipoContacto, IncotermCompra, 
+    init_database, get_db, TipoContacto, Industria, IncotermCompra, 
     IncotermVenta, EstadoOperacion, TipoMovimiento, EstadoPago, TipoPago
 )
 from database import (
@@ -26,6 +26,10 @@ st.set_page_config(
 
 # Inicializar base de datos
 init_database()
+
+# Migrar campos nuevos
+from database import migrate_database_fields
+migrate_database_fields()
 
 # Función para migrar la tabla pagos_programados
 def migrate_tipo_pagos():
@@ -884,10 +888,13 @@ def show_contactos():
                     "Razón Social": getattr(contacto, 'razon_social', None) or "N/A",
                     "Tipo": contacto.tipo.value.title(),
                     "País": contacto.pais or "N/A",
+                    "Provincia": getattr(contacto, 'provincia', None) or "N/A",
                     "Email": contacto.email or "N/A",
                     "Teléfono": contacto.telefono or "N/A",
-                    "CUIT": getattr(contacto, 'cuit', None) or "N/A",
-                    "EIN": getattr(contacto, 'ein', None) or "N/A"
+                    "ID Fiscal": getattr(contacto, 'numero_identificacion_fiscal', None) or "N/A",
+                    "Industria": getattr(contacto, 'industria', None).value.title() if getattr(contacto, 'industria', None) else "N/A",
+                    "Dir. Fábrica": getattr(contacto, 'direccion_fabrica', None) or "N/A",
+                    "Puerto": getattr(contacto, 'puerto_conveniente', None) or "N/A"
                 })
             
             df = pd.DataFrame(data)
@@ -913,6 +920,32 @@ def show_contactos():
                 razon_social = st.text_input("Razón Social:", placeholder="Razón social completa")
                 pais = st.text_input("País:", placeholder="Ej: China, Argentina")
             
+            # Campo de provincia
+            provincia = st.text_input("Provincia/Estado:", placeholder="Ej: Buenos Aires, Guangdong")
+            
+            # Campo de industria para clientes
+            industria = None
+            if tipo == TipoContacto.CLIENTE:
+                industria = st.selectbox(
+                    "Industria:",
+                    options=list(Industria),
+                    format_func=lambda x: x.value.replace("_", " ").title(),
+                    help="Seleccione la industria principal del cliente"
+                )
+            
+            # Campos adicionales para proveedores
+            direccion_fabrica = None
+            puerto_conveniente = None
+            if tipo == TipoContacto.PROVEEDOR:
+                direccion_fabrica = st.text_area(
+                    "Dirección de la Fábrica:",
+                    placeholder="Dirección completa de la planta de producción"
+                )
+                puerto_conveniente = st.text_input(
+                    "Puerto Conveniente/Cercano:",
+                    placeholder="Ej: Puerto de Shanghai, Puerto de Shenzhen"
+                )
+            
             st.subheader("Información de Contacto")
             
             col1, col2 = st.columns(2)
@@ -922,8 +955,11 @@ def show_contactos():
                 telefono = st.text_input("Teléfono:", placeholder="+86 123 456 7890")
             
             with col2:
-                cuit = st.text_input("CUIT:", placeholder="Para clientes argentinos")
-                ein = st.text_input("EIN:", placeholder="Para clientes estadounidenses")
+                numero_identificacion_fiscal = st.text_input(
+                    "Número de Identificación Fiscal:", 
+                    placeholder="CUIT, EIN, RUT, etc.",
+                    help="Ingrese el número de identificación fiscal según el país"
+                )
             
             st.subheader("Dirección Fiscal")
             direccion_fiscal = st.text_area(
@@ -942,12 +978,15 @@ def show_contactos():
                                 nombre=nombre,
                                 tipo=tipo,
                                 pais=pais,
+                                provincia=provincia,
                                 email=email,
                                 telefono=telefono,
                                 razon_social=razon_social,
                                 direccion_fiscal=direccion_fiscal,
-                                cuit=cuit,
-                                ein=ein
+                                numero_identificacion_fiscal=numero_identificacion_fiscal,
+                                industria=industria,
+                                direccion_fabrica=direccion_fabrica,
+                                puerto_conveniente=puerto_conveniente
                             )
                             st.success("✅ Contacto creado exitosamente!")
                             st.balloons()
@@ -1077,50 +1116,127 @@ def show_facturas():
                 format_func=lambda x: f"Op #{x.id} - {x.cliente.nombre} - ${x.precio_venta:,.2f}"
             )
             
-            fecha_factura = st.date_input(
-                "Fecha de Factura:",
-                value=date.today(),
-                help="Debe ser anterior a la fecha HBL"
+            st.markdown("---")
+            st.subheader("📋 Datos de la Factura (Editables)")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Datos básicos de la factura
+                numero_factura = st.text_input(
+                    "Número de Factura:",
+                    value=f"FAC-{datetime.now().strftime('%Y%m%d')}-{operacion_seleccionada.id if operacion_seleccionada else '001'}",
+                    help="Ingrese el número de factura personalizado"
+                )
+                
+                fecha_factura = st.date_input(
+                    "Fecha de Factura:",
+                    value=date.today(),
+                    help="Debe ser anterior a la fecha HBL"
+                )
+                
+                moneda = st.selectbox(
+                    "Moneda:",
+                    options=["USD", "EUR", "ARS", "CNY"],
+                    index=0
+                )
+            
+            with col2:
+                # Montos editables
+                if operacion_seleccionada:
+                    subtotal_fob = st.number_input(
+                        "Subtotal FOB:",
+                        value=float(operacion_seleccionada.valor_compra),
+                        min_value=0.0,
+                        step=0.01,
+                        format="%.2f"
+                    )
+                    
+                    total_incoterm = st.number_input(
+                        f"Total {operacion_seleccionada.incoterm_venta.value if operacion_seleccionada else 'INCOTERM'}:",
+                        value=float(operacion_seleccionada.precio_venta),
+                        min_value=0.0,
+                        step=0.01,
+                        format="%.2f"
+                    )
+                else:
+                    subtotal_fob = st.number_input(
+                        "Subtotal FOB:",
+                        value=0.0,
+                        min_value=0.0,
+                        step=0.01,
+                        format="%.2f"
+                    )
+                    
+                    total_incoterm = st.number_input(
+                        "Total INCOTERM:",
+                        value=0.0,
+                        min_value=0.0,
+                        step=0.01,
+                        format="%.2f"
+                    )
+            
+            # Descripción personalizable
+            descripcion_productos = st.text_area(
+                "Descripción de Productos/Servicios:",
+                value=operacion_seleccionada.descripcion_venta if operacion_seleccionada and operacion_seleccionada.descripcion_venta else "",
+                placeholder="Describa los productos o servicios facturados",
+                height=100
             )
             
-            # Mostrar información de la operación seleccionada
+            # Observaciones adicionales
+            observaciones_factura = st.text_area(
+                "Observaciones de la Factura:",
+                placeholder="Observaciones adicionales para la factura (términos de pago, etc.)",
+                height=80
+            )
+            
+            # Mostrar información del cliente seleccionado
             if operacion_seleccionada:
-                st.subheader("📋 Preview de la Factura")
+                st.markdown("---")
+                st.subheader("👤 Información del Cliente")
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    st.write("**Datos del Cliente:**")
                     cliente = operacion_seleccionada.cliente
-                    st.write(f"• Nombre: {cliente.nombre}")
+                    st.write(f"**Nombre:** {cliente.nombre}")
                     if hasattr(cliente, 'razon_social') and cliente.razon_social:
-                        st.write(f"• Razón Social: {cliente.razon_social}")
-                    if hasattr(cliente, 'direccion_fiscal') and cliente.direccion_fiscal:
-                        st.write(f"• Dirección: {cliente.direccion_fiscal}")
-                    if hasattr(cliente, 'cuit') and cliente.cuit:
-                        st.write(f"• CUIT: {cliente.cuit}")
-                    if hasattr(cliente, 'ein') and cliente.ein:
-                        st.write(f"• EIN: {cliente.ein}")
+                        st.write(f"**Razón Social:** {cliente.razon_social}")
+                    if hasattr(cliente, 'numero_identificacion_fiscal') and cliente.numero_identificacion_fiscal:
+                        st.write(f"**ID Fiscal:** {cliente.numero_identificacion_fiscal}")
                 
                 with col2:
-                    st.write("**Datos de la Operación:**")
-                    st.write(f"• INCOTERM: {operacion_seleccionada.incoterm_venta.value}")
-                    st.write(f"• Moneda: USD")
-                    if hasattr(operacion_seleccionada, 'origen_bienes') and operacion_seleccionada.origen_bienes:
-                        st.write(f"• Origen: {operacion_seleccionada.origen_bienes}")
-                    st.write(f"• Subtotal FOB: ${operacion_seleccionada.valor_compra:,.2f}")
-                    st.write(f"• Total {operacion_seleccionada.incoterm_venta.value}: ${operacion_seleccionada.precio_venta:,.2f}")
+                    if hasattr(cliente, 'direccion_fiscal') and cliente.direccion_fiscal:
+                        st.write(f"**Dirección:** {cliente.direccion_fiscal}")
+                    if hasattr(cliente, 'pais') and cliente.pais:
+                        st.write(f"**País:** {cliente.pais}")
+                    if hasattr(cliente, 'provincia') and cliente.provincia:
+                        st.write(f"**Provincia:** {cliente.provincia}")
                 
                 # Validación de fecha HBL
                 if hasattr(operacion_seleccionada, 'fecha_hbl') and operacion_seleccionada.fecha_hbl and fecha_factura >= operacion_seleccionada.fecha_hbl:
                     st.error(f"⚠️ La fecha de factura debe ser anterior al HBL ({operacion_seleccionada.fecha_hbl})")
             
-            submitted = st.form_submit_button("📄 Generar Factura")
+            submitted = st.form_submit_button("📄 Generar Factura", use_container_width=True)
+            
             if submitted:
+                if not numero_factura:
+                    st.error("El número de factura es obligatorio")
+                elif not descripcion_productos:
+                    st.error("La descripción de productos es obligatoria")
+                else:
                     try:
-                        factura_service.generar_factura(
+                        # Crear factura con datos personalizados
+                        factura_service.generar_factura_personalizada(
                             operacion_id=operacion_seleccionada.id,
-                            fecha_factura=fecha_factura
+                            numero=numero_factura,
+                            fecha_factura=fecha_factura,
+                            subtotal_fob=subtotal_fob,
+                            total_incoterm=total_incoterm,
+                            moneda=moneda,
+                            descripcion=descripcion_productos,
+                            observaciones=observaciones_factura
                         )
                         st.success("✅ Factura generada exitosamente!")
                         st.balloons()
@@ -1248,32 +1364,40 @@ def show_gestionar_pagos():
                         with col4:
                             # Solo mostrar botón para cambiar estado si está pendiente
                             if pago.estado == EstadoPago.PENDIENTE:
-                                if st.button("Pagar", key=f"pagar_{pago.id}"):
-                                    # Registrar el movimiento y cambiar el estado
-                                    try:
-                                        # Crear movimiento financiero
-                                        movimiento_service.crear_movimiento(
-                                            fecha=date.today(),
-                                            tipo=TipoMovimiento.DEPOSITO_OPERACION,
-                                            descripcion=f"Pago: {pago.descripcion} - Op #{operacion_seleccionada.id}",
-                                            monto_salida=monto,
-                                            operacion_id=operacion_seleccionada.id
-                                        )
-                                        
-                                        # Actualizar estado del pago - obtener de la BD para evitar detached
-                                        pago_update = db.query(PagoProgramado).filter(PagoProgramado.id == pago.id).first()
-                                        if pago_update:
-                                            pago_update.estado = EstadoPago.PAGADO
-                                            pago_update.fecha_real_pago = date.today()
-                                            db.commit()
+                                # Formulario pequeño para seleccionar fecha
+                                with st.form(key=f"form_pagar_{pago.id}"):
+                                    fecha_real_pago = st.date_input(
+                                        "Fecha real:",
+                                        value=date.today(),
+                                        key=f"fecha_pago_{pago.id}",
+                                        help="Seleccione la fecha real del pago"
+                                    )
+                                    if st.form_submit_button("Pagar", use_container_width=True):
+                                        # Registrar el movimiento y cambiar el estado
+                                        try:
+                                            # Crear movimiento financiero
+                                            movimiento_service.crear_movimiento(
+                                                fecha=fecha_real_pago,
+                                                tipo=TipoMovimiento.DEPOSITO_OPERACION,
+                                                descripcion=f"Pago: {pago.descripcion} - Op #{operacion_seleccionada.id}",
+                                                monto_salida=monto,
+                                                operacion_id=operacion_seleccionada.id
+                                            )
                                             
-                                            st.success(f"Pago registrado exitosamente")
-                                            time.sleep(1)
-                                            st.rerun()
-                                        else:
-                                            st.error("No se pudo encontrar el pago en la base de datos")
-                                    except Exception as e:
-                                        st.error(f"Error al registrar pago: {str(e)}")
+                                            # Actualizar estado del pago - obtener de la BD para evitar detached
+                                            pago_update = db.query(PagoProgramado).filter(PagoProgramado.id == pago.id).first()
+                                            if pago_update:
+                                                pago_update.estado = EstadoPago.PAGADO
+                                                pago_update.fecha_real_pago = fecha_real_pago
+                                                db.commit()
+                                                
+                                                st.success(f"Pago registrado exitosamente")
+                                                time.sleep(1)
+                                                st.rerun()
+                                            else:
+                                                st.error("No se pudo encontrar el pago en la base de datos")
+                                        except Exception as e:
+                                            st.error(f"Error al registrar pago: {str(e)}")
             
             # Mostrar cobros
             if cobros:
@@ -1302,32 +1426,40 @@ def show_gestionar_pagos():
                         with col4:
                             # Solo mostrar botón para cambiar estado si está pendiente
                             if cobro.estado == EstadoPago.PENDIENTE:
-                                if st.button("Cobrar", key=f"cobrar_{cobro.id}"):
-                                    # Registrar el movimiento y cambiar el estado
-                                    try:
-                                        # Crear movimiento financiero
-                                        movimiento_service.crear_movimiento(
-                                            fecha=date.today(),
-                                            tipo=TipoMovimiento.COBRO_OPERACION,
-                                            descripcion=f"Cobro: {cobro.descripcion} - Op #{operacion_seleccionada.id}",
-                                            monto_entrada=monto,
-                                            operacion_id=operacion_seleccionada.id
-                                        )
-                                        
-                                        # Actualizar estado del cobro - obtener de la BD para evitar detached
-                                        cobro_update = db.query(PagoProgramado).filter(PagoProgramado.id == cobro.id).first()
-                                        if cobro_update:
-                                            cobro_update.estado = EstadoPago.PAGADO
-                                            cobro_update.fecha_real_pago = date.today()
-                                            db.commit()
+                                # Formulario pequeño para seleccionar fecha
+                                with st.form(key=f"form_cobrar_{cobro.id}"):
+                                    fecha_real_cobro = st.date_input(
+                                        "Fecha real:",
+                                        value=date.today(),
+                                        key=f"fecha_cobro_{cobro.id}",
+                                        help="Seleccione la fecha real del cobro"
+                                    )
+                                    if st.form_submit_button("Cobrar", use_container_width=True):
+                                        # Registrar el movimiento y cambiar el estado
+                                        try:
+                                            # Crear movimiento financiero
+                                            movimiento_service.crear_movimiento(
+                                                fecha=fecha_real_cobro,
+                                                tipo=TipoMovimiento.COBRO_OPERACION,
+                                                descripcion=f"Cobro: {cobro.descripcion} - Op #{operacion_seleccionada.id}",
+                                                monto_entrada=monto,
+                                                operacion_id=operacion_seleccionada.id
+                                            )
                                             
-                                            st.success(f"Cobro registrado exitosamente")
-                                            time.sleep(1)
-                                            st.rerun()
-                                        else:
-                                            st.error("No se pudo encontrar el cobro en la base de datos")
-                                    except Exception as e:
-                                        st.error(f"Error al registrar cobro: {str(e)}")
+                                            # Actualizar estado del cobro - obtener de la BD para evitar detached
+                                            cobro_update = db.query(PagoProgramado).filter(PagoProgramado.id == cobro.id).first()
+                                            if cobro_update:
+                                                cobro_update.estado = EstadoPago.PAGADO
+                                                cobro_update.fecha_real_pago = fecha_real_cobro
+                                                db.commit()
+                                                
+                                                st.success(f"Cobro registrado exitosamente")
+                                                time.sleep(1)
+                                                st.rerun()
+                                            else:
+                                                st.error("No se pudo encontrar el cobro en la base de datos")
+                                        except Exception as e:
+                                            st.error(f"Error al registrar cobro: {str(e)}")
         else:
             st.info("No hay pagos programados para esta operación")
 
