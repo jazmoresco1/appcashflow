@@ -8,7 +8,8 @@ from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 from models import (
     init_database, get_db, TipoContacto, Industria, IncotermCompra, 
-    IncotermVenta, EstadoOperacion, TipoMovimiento, EstadoPago, TipoPago
+    IncotermVenta, EstadoOperacion, TipoMovimiento, EstadoPago, TipoPago,
+    Contacto, Operacion, PagoProgramado, MovimientoFinanciero, Factura
 )
 from database import (
     ContactoService, OperacionService, MovimientoFinancieroService, 
@@ -856,6 +857,200 @@ def show_operaciones():
                     st.dataframe(df_pagos, use_container_width=True)
                 else:
                     st.info("Esta operación no tiene pagos programados.")
+        
+        # Sección de borrado de operaciones
+        st.markdown("---")
+        st.subheader("🗑️ Borrar Operación")
+        
+        # Obtener operaciones desde la base de datos
+        db = next(get_db())
+        operacion_service = OperacionService(db)
+        operaciones_todas = operacion_service.obtener_operaciones()
+        
+        if operaciones_todas:
+            # Separar operaciones por estado
+            operaciones_activas = [op for op in operaciones_todas if op.estado == EstadoOperacion.ACTIVA]
+            operaciones_completadas = [op for op in operaciones_todas if op.estado == EstadoOperacion.COMPLETADA]
+            operaciones_canceladas = [op for op in operaciones_todas if op.estado == EstadoOperacion.CANCELADA]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.info(f"📊 **Resumen de operaciones:**")
+                st.write(f"- Activas: {len(operaciones_activas)}")
+                st.write(f"- Completadas: {len(operaciones_completadas)}")
+                st.write(f"- Canceladas: {len(operaciones_canceladas)}")
+                
+                # Selector de operación a borrar
+                if operaciones_todas:
+                    operacion_a_borrar = st.selectbox(
+                        "Seleccionar operación a borrar:",
+                        options=[None] + operaciones_todas,
+                        format_func=lambda x: "Seleccionar..." if x is None else f"#{x.id} - {x.cliente.nombre} - ${x.precio_venta:,.2f} ({x.estado.value})",
+                        key="operacion_borrar"
+                    )
+                    
+                    if operacion_a_borrar:
+                        # Obtener información de la operación de forma segura
+                        operacion_id = operacion_a_borrar.id
+                        cliente_nombre = operacion_a_borrar.cliente.nombre
+                        proveedor_nombre = operacion_a_borrar.proveedor.nombre
+                        precio_venta = operacion_a_borrar.precio_venta
+                        estado = operacion_a_borrar.estado
+                        fecha_creacion = operacion_a_borrar.fecha_creacion
+                        
+                        # Contar registros relacionados usando la base de datos directamente
+                        movimientos_count = db.query(MovimientoFinanciero).filter(
+                            MovimientoFinanciero.operacion_id == operacion_id
+                        ).count()
+                        
+                        pagos_count = db.query(PagoProgramado).filter(
+                            PagoProgramado.operacion_id == operacion_id
+                        ).count()
+                        
+                        factura_exists = db.query(Factura).filter(
+                            Factura.operacion_id == operacion_id
+                        ).first() is not None
+                        
+                        # Mostrar información de la operación
+                        st.warning(f"⚠️ **Operación a borrar:**")
+                        st.write(f"- **ID:** #{operacion_id}")
+                        st.write(f"- **Cliente:** {cliente_nombre}")
+                        st.write(f"- **Proveedor:** {proveedor_nombre}")
+                        st.write(f"- **Valor:** ${precio_venta:,.2f}")
+                        st.write(f"- **Estado:** {estado.value.title()}")
+                        st.write(f"- **Fecha:** {fecha_creacion.strftime('%d/%m/%Y')}")
+                        
+                        st.write(f"- **Movimientos financieros:** {movimientos_count}")
+                        st.write(f"- **Pagos programados:** {pagos_count}")
+                        st.write(f"- **Factura:** {'Sí' if factura_exists else 'No'}")
+                        
+                        # Confirmación de borrado
+                        st.error("⚠️ **ADVERTENCIA:** Esta acción eliminará la operación y TODOS sus registros relacionados (movimientos, pagos, factura).")
+                        
+                        confirmar_texto = st.text_input(
+                            f"Para confirmar, escribe: **BORRAR {operacion_id}**",
+                            key="confirmar_operacion"
+                        )
+                        
+                        if st.button("🗑️ CONFIRMAR BORRADO", type="primary", key="confirmar_borrado_op"):
+                            if confirmar_texto == f"BORRAR {operacion_id}":
+                                try:
+                                    # Obtener la operación fresca de la base de datos
+                                    operacion_id = operacion_a_borrar.id
+                                    
+                                    # Crear una nueva sesión para evitar conflictos
+                                    db_fresh = next(get_db())
+                                    
+                                    operacion_fresh = db_fresh.query(Operacion).filter(Operacion.id == operacion_id).first()
+                                    
+                                    if operacion_fresh:
+                                        # Contar registros antes de borrar
+                                        movimientos_borrar = db_fresh.query(MovimientoFinanciero).filter(
+                                            MovimientoFinanciero.operacion_id == operacion_id
+                                        ).count()
+                                        
+                                        pagos_borrar = db_fresh.query(PagoProgramado).filter(
+                                            PagoProgramado.operacion_id == operacion_id
+                                        ).count()
+                                        
+                                        facturas_borrar = db_fresh.query(Factura).filter(
+                                            Factura.operacion_id == operacion_id
+                                        ).count()
+                                        
+                                        # Borrar registros relacionados
+                                        # 1. Movimientos financieros
+                                        db_fresh.query(MovimientoFinanciero).filter(
+                                            MovimientoFinanciero.operacion_id == operacion_id
+                                        ).delete()
+                                        
+                                        # 2. Pagos programados
+                                        db_fresh.query(PagoProgramado).filter(
+                                            PagoProgramado.operacion_id == operacion_id
+                                        ).delete()
+                                        
+                                        # 3. Facturas
+                                        db_fresh.query(Factura).filter(
+                                            Factura.operacion_id == operacion_id
+                                        ).delete()
+                                        
+                                        # 4. Finalmente, borrar la operación
+                                        db_fresh.delete(operacion_fresh)
+                                        
+                                        # Confirmar cambios
+                                        db_fresh.commit()
+                                        
+                                        st.success(f"""✅ **Operación #{operacion_id} borrada exitosamente!**
+                                        
+                                        **Registros eliminados:**
+                                        - Operación: 1
+                                        - Movimientos financieros: {movimientos_borrar}
+                                        - Pagos programados: {pagos_borrar}
+                                        - Facturas: {facturas_borrar}
+                                        """)
+                                        
+                                        db_fresh.close()
+                                        
+                                        # Limpiar caché y recargar
+                                        st.cache_data.clear()
+                                        time.sleep(2)
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ La operación ya no existe")
+                                        
+                                except Exception as e:
+                                    if 'db_fresh' in locals():
+                                        db_fresh.rollback()
+                                        db_fresh.close()
+                                    st.error(f"❌ Error al borrar operación: {str(e)}")
+                            else:
+                                st.error(f"❌ Debes escribir exactamente: **BORRAR {operacion_a_borrar.id}**")
+            
+            with col2:
+                st.warning("⚠️ **Operaciones más seguras de borrar:**")
+                
+                # Mostrar operaciones canceladas (más seguras de borrar)
+                if operaciones_canceladas:
+                    st.write("**Operaciones CANCELADAS:**")
+                    for op in operaciones_canceladas:
+                        # Obtener conteos de forma segura
+                        mov_count = db.query(MovimientoFinanciero).filter(
+                            MovimientoFinanciero.operacion_id == op.id
+                        ).count()
+                        pago_count = db.query(PagoProgramado).filter(
+                            PagoProgramado.operacion_id == op.id
+                        ).count()
+                        st.write(f"- #{op.id}: {op.cliente.nombre} ({mov_count} mov, {pago_count} pagos)")
+                else:
+                    st.write("No hay operaciones canceladas")
+                
+                st.info("💡 **Tips para borrar operaciones:**")
+                st.write("- Las operaciones **CANCELADAS** son más seguras de borrar")
+                st.write("- Las operaciones **ACTIVAS** pueden tener movimientos financieros importantes")
+                st.write("- Las operaciones **COMPLETADAS** tienen historial valioso")
+                st.write("- Siempre haz backup antes de borrar")
+                st.write("- Considera cambiar el estado a CANCELADA en lugar de borrar")
+                
+                # Opción rápida para cancelar operación en lugar de borrar
+                if operacion_a_borrar and operacion_a_borrar.estado == EstadoOperacion.ACTIVA:
+                    st.markdown("---")
+                    st.write("**Alternativa: Cancelar en lugar de borrar**")
+                    if st.button("📝 Marcar como CANCELADA", key="cancelar_op"):
+                        try:
+                            operacion_id_cancelar = operacion_a_borrar.id
+                            db_fresh = next(get_db())
+                            op_fresh = db_fresh.query(Operacion).filter(Operacion.id == operacion_id_cancelar).first()
+                            if op_fresh:
+                                op_fresh.estado = EstadoOperacion.CANCELADA
+                                db_fresh.commit()
+                                st.success(f"✅ Operación #{operacion_id_cancelar} marcada como CANCELADA")
+                                db_fresh.close()
+                                st.cache_data.clear()
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")
+        else:
+            st.info("No hay operaciones para borrar.")
     else:
         st.info("No hay operaciones registradas.")
 
@@ -938,12 +1133,28 @@ def show_contactos():
                         
                         if st.button("🗑️ Confirmar Borrado", type="primary", key="confirmar_borrar"):
                             try:
-                                db.delete(contacto_a_borrar)
-                                db.commit()
-                                st.success(f"✅ Contacto '{contacto_a_borrar.nombre}' borrado exitosamente")
-                                st.rerun()
+                                # Obtener el contacto fresco de la base de datos
+                                contacto_id = contacto_a_borrar.id
+                                contacto_nombre = contacto_a_borrar.nombre
+                                
+                                # Crear una nueva sesión para evitar conflictos
+                                db_fresh = next(get_db())
+                                
+                                contacto_fresh = db_fresh.query(Contacto).filter(Contacto.id == contacto_id).first()
+                                
+                                if contacto_fresh:
+                                    db_fresh.delete(contacto_fresh)
+                                    db_fresh.commit()
+                                    st.success(f"✅ Contacto '{contacto_nombre}' borrado exitosamente")
+                                    db_fresh.close()
+                                    st.rerun()
+                                else:
+                                    st.error("❌ El contacto ya no existe")
+                                    
                             except Exception as e:
-                                db.rollback()
+                                if 'db_fresh' in locals():
+                                    db_fresh.rollback()
+                                    db_fresh.close()
                                 st.error(f"❌ Error al borrar contacto: {str(e)}")
             
             with col2:
