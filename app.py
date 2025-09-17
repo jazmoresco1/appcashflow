@@ -891,19 +891,35 @@ def show_operaciones():
                     )
                     
                     if operacion_a_borrar:
+                        # Obtener información de la operación de forma segura
+                        operacion_id = operacion_a_borrar.id
+                        cliente_nombre = operacion_a_borrar.cliente.nombre
+                        proveedor_nombre = operacion_a_borrar.proveedor.nombre
+                        precio_venta = operacion_a_borrar.precio_venta
+                        estado = operacion_a_borrar.estado
+                        fecha_creacion = operacion_a_borrar.fecha_creacion
+                        
+                        # Contar registros relacionados usando la base de datos directamente
+                        movimientos_count = db.query(MovimientoFinanciero).filter(
+                            MovimientoFinanciero.operacion_id == operacion_id
+                        ).count()
+                        
+                        pagos_count = db.query(PagoProgramado).filter(
+                            PagoProgramado.operacion_id == operacion_id
+                        ).count()
+                        
+                        factura_exists = db.query(Factura).filter(
+                            Factura.operacion_id == operacion_id
+                        ).first() is not None
+                        
                         # Mostrar información de la operación
                         st.warning(f"⚠️ **Operación a borrar:**")
-                        st.write(f"- **ID:** #{operacion_a_borrar.id}")
-                        st.write(f"- **Cliente:** {operacion_a_borrar.cliente.nombre}")
-                        st.write(f"- **Proveedor:** {operacion_a_borrar.proveedor.nombre}")
-                        st.write(f"- **Valor:** ${operacion_a_borrar.precio_venta:,.2f}")
-                        st.write(f"- **Estado:** {operacion_a_borrar.estado.value.title()}")
-                        st.write(f"- **Fecha:** {operacion_a_borrar.fecha_creacion.strftime('%d/%m/%Y')}")
-                        
-                        # Verificar registros relacionados
-                        movimientos_count = len(operacion_a_borrar.movimientos_financieros)
-                        pagos_count = len(operacion_a_borrar.pagos_programados)
-                        factura_exists = operacion_a_borrar.factura is not None
+                        st.write(f"- **ID:** #{operacion_id}")
+                        st.write(f"- **Cliente:** {cliente_nombre}")
+                        st.write(f"- **Proveedor:** {proveedor_nombre}")
+                        st.write(f"- **Valor:** ${precio_venta:,.2f}")
+                        st.write(f"- **Estado:** {estado.value.title()}")
+                        st.write(f"- **Fecha:** {fecha_creacion.strftime('%d/%m/%Y')}")
                         
                         st.write(f"- **Movimientos financieros:** {movimientos_count}")
                         st.write(f"- **Pagos programados:** {pagos_count}")
@@ -913,12 +929,12 @@ def show_operaciones():
                         st.error("⚠️ **ADVERTENCIA:** Esta acción eliminará la operación y TODOS sus registros relacionados (movimientos, pagos, factura).")
                         
                         confirmar_texto = st.text_input(
-                            f"Para confirmar, escribe: **BORRAR {operacion_a_borrar.id}**",
+                            f"Para confirmar, escribe: **BORRAR {operacion_id}**",
                             key="confirmar_operacion"
                         )
                         
                         if st.button("🗑️ CONFIRMAR BORRADO", type="primary", key="confirmar_borrado_op"):
-                            if confirmar_texto == f"BORRAR {operacion_a_borrar.id}":
+                            if confirmar_texto == f"BORRAR {operacion_id}":
                                 try:
                                     # Obtener la operación fresca de la base de datos
                                     operacion_id = operacion_a_borrar.id
@@ -997,8 +1013,13 @@ def show_operaciones():
                 if operaciones_canceladas:
                     st.write("**Operaciones CANCELADAS:**")
                     for op in operaciones_canceladas:
-                        mov_count = len(op.movimientos_financieros)
-                        pago_count = len(op.pagos_programados)
+                        # Obtener conteos de forma segura
+                        mov_count = db.query(MovimientoFinanciero).filter(
+                            MovimientoFinanciero.operacion_id == op.id
+                        ).count()
+                        pago_count = db.query(PagoProgramado).filter(
+                            PagoProgramado.operacion_id == op.id
+                        ).count()
                         st.write(f"- #{op.id}: {op.cliente.nombre} ({mov_count} mov, {pago_count} pagos)")
                 else:
                     st.write("No hay operaciones canceladas")
@@ -1016,12 +1037,13 @@ def show_operaciones():
                     st.write("**Alternativa: Cancelar en lugar de borrar**")
                     if st.button("📝 Marcar como CANCELADA", key="cancelar_op"):
                         try:
+                            operacion_id_cancelar = operacion_a_borrar.id
                             db_fresh = next(get_db())
-                            op_fresh = db_fresh.query(Operacion).filter(Operacion.id == operacion_a_borrar.id).first()
+                            op_fresh = db_fresh.query(Operacion).filter(Operacion.id == operacion_id_cancelar).first()
                             if op_fresh:
                                 op_fresh.estado = EstadoOperacion.CANCELADA
                                 db_fresh.commit()
-                                st.success(f"✅ Operación #{operacion_a_borrar.id} marcada como CANCELADA")
+                                st.success(f"✅ Operación #{operacion_id_cancelar} marcada como CANCELADA")
                                 db_fresh.close()
                                 st.cache_data.clear()
                                 st.rerun()
