@@ -1535,7 +1535,9 @@ def main():
             "Gestionar Pagos y Cobros",
             "Gestión de Contactos",
             "Códigos HS",
-            "Facturas"
+            "Facturas",
+            "Importar Movimientos Excel",
+            "Importar Contactos Excel"
         ]
     )
     
@@ -1555,6 +1557,10 @@ def main():
         show_hs_codes()
     elif page == "Facturas":
         show_facturas()
+    elif page == "Importar Movimientos Excel":
+        show_importar_movimientos_excel()
+    elif page == "Importar Contactos Excel":
+        show_importar_contactos_excel()
 
 def show_gestionar_pagos():
     """Gestionar pagos y cobros pendientes"""
@@ -1735,5 +1741,215 @@ def show_gestionar_pagos():
         else:
             st.info("No hay pagos programados para esta operación")
 
-if __name__ == "__main__":
-    main()
+def show_importar_movimientos_excel():
+    """Importar movimientos financieros desde Excel"""
+    st.header("📂 Importar Movimientos desde Excel")
+    
+    # Plantilla de ejemplo
+    st.subheader("📋 Formato Esperado")
+    ejemplo_movimientos = {
+        "Fecha": ["2025-01-15", "2025-01-20"],
+        "Tipo": ["APORTE_INICIAL", "RETIRO"],
+        "Descripcion": ["Aporte inicial de capital", "Retiro para gastos"],
+        "Monto_Entrada": [10000.00, 0.00],
+        "Monto_Salida": [0.00, 500.00],
+        "Referencia": ["DEP-001", "RET-001"],
+        "Observaciones": ["Capital inicial", "Gastos operativos"]
+    }
+    
+    df_ejemplo = pd.DataFrame(ejemplo_movimientos)
+    st.dataframe(df_ejemplo, use_container_width=True)
+    
+    # Descargar plantilla
+    csv_plantilla = df_ejemplo.to_csv(index=False)
+    st.download_button(
+        label="📥 Descargar Plantilla CSV",
+        data=csv_plantilla,
+        file_name="plantilla_movimientos.csv",
+        mime="text/csv"
+    )
+    
+    st.info("""
+    **Tipos válidos:** APORTE_INICIAL, ADELANTO, RETIRO, DEPOSITO_OPERACION, COBRO_OPERACION, PAGO_IMPUESTOS
+    
+    **Formato fechas:** YYYY-MM-DD
+    """)
+    
+    # Subir archivo
+    st.markdown("---")
+    uploaded_file = st.file_uploader(
+        "Selecciona archivo Excel/CSV:",
+        type=['xlsx', 'xls', 'csv']
+    )
+    
+    if uploaded_file:
+        try:
+            # Leer archivo
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            
+            st.success(f"✅ Archivo cargado: {len(df)} filas")
+            st.dataframe(df.head(), use_container_width=True)
+            
+            if st.button("🚀 Procesar Movimientos", type="primary"):
+                db = next(get_db())
+                movimiento_service = MovimientoFinancieroService(db)
+                
+                procesados = 0
+                errores = []
+                
+                for idx, row in df.iterrows():
+                    try:
+                        # Validar tipo
+                        tipo_str = str(row['Tipo']).upper()
+                        tipo_mov = None
+                        for tipo in TipoMovimiento:
+                            if tipo.value.upper() == tipo_str:
+                                tipo_mov = tipo
+                                break
+                        
+                        if not tipo_mov:
+                            errores.append(f"Fila {idx+2}: Tipo '{tipo_str}' no válido")
+                            continue
+                        
+                        # Crear movimiento
+                        movimiento_service.crear_movimiento(
+                            fecha=pd.to_datetime(row['Fecha']).date(),
+                            tipo=tipo_mov,
+                            descripcion=str(row['Descripcion']),
+                            monto_entrada=float(row.get('Monto_Entrada', 0)),
+                            monto_salida=float(row.get('Monto_Salida', 0)),
+                            referencia=str(row.get('Referencia', '')),
+                            observaciones=str(row.get('Observaciones', ''))
+                        )
+                        procesados += 1
+                        
+                    except Exception as e:
+                        errores.append(f"Fila {idx+2}: {str(e)}")
+                
+                if procesados > 0:
+                    st.success(f"✅ {procesados} movimientos importados")
+                
+                if errores:
+                    st.error(f"❌ {len(errores)} errores:")
+                    for error in errores[:5]:
+                        st.write(f"- {error}")
+                        
+        except Exception as e:
+            st.error(f"Error al leer archivo: {str(e)}")
+
+def show_importar_contactos_excel():
+    """Importar contactos desde Excel"""
+    st.header("👥 Importar Contactos desde Excel")
+    
+    # Plantilla de ejemplo
+    st.subheader("📋 Formato Esperado")
+    ejemplo_contactos = {
+        "Nombre": ["Proveedor ABC", "Cliente XYZ"],
+        "Tipo": ["PROVEEDOR", "CLIENTE"],
+        "Pais": ["China", "Argentina"],
+        "Email": ["contacto@abc.com", "ventas@xyz.com"],
+        "Telefono": ["+86 123 456", "+54 11 1234"],
+        "Razon_Social": ["ABC Manufacturing Ltd", "XYZ Importaciones SA"],
+        "Direccion_Fiscal": ["123 Main St, Shanghai", "Av. Corrientes 123, CABA"],
+        "ID_Fiscal": ["CHN123456789", "30-12345678-9"],
+        "Industria": ["TEXTIL", "CONSTRUCCION"],
+        "Provincia": ["Guangdong", "Buenos Aires"]
+    }
+    
+    df_ejemplo = pd.DataFrame(ejemplo_contactos)
+    st.dataframe(df_ejemplo, use_container_width=True)
+    
+    # Descargar plantilla
+    csv_plantilla = df_ejemplo.to_csv(index=False)
+    st.download_button(
+        label="📥 Descargar Plantilla CSV",
+        data=csv_plantilla,
+        file_name="plantilla_contactos.csv",
+        mime="text/csv"
+    )
+    
+    st.info("""
+    **Tipos válidos:** PROVEEDOR, CLIENTE, AGENTE_LOGISTICO
+    
+    **Industrias válidas:** AGRICOLA, CONSTRUCCION, TEXTIL, ALIMENTARIA, AUTOMOTRIZ, TECNOLOGIA, ENERGIA, FARMACEUTICA, QUIMICA, METALURGICA, MINERIA, MADERERA, PLASTICA, OTRA
+    """)
+    
+    # Subir archivo
+    st.markdown("---")
+    uploaded_file = st.file_uploader(
+        "Selecciona archivo Excel/CSV:",
+        type=['xlsx', 'xls', 'csv']
+    )
+    
+    if uploaded_file:
+        try:
+            # Leer archivo
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            
+            st.success(f"✅ Archivo cargado: {len(df)} filas")
+            st.dataframe(df.head(), use_container_width=True)
+            
+            if st.button("🚀 Procesar Contactos", type="primary"):
+                db = next(get_db())
+                contacto_service = ContactoService(db)
+                
+                procesados = 0
+                errores = []
+                
+                for idx, row in df.iterrows():
+                    try:
+                        # Validar tipo
+                        tipo_str = str(row['Tipo']).upper()
+                        tipo_contacto = None
+                        for tipo in TipoContacto:
+                            if tipo.value.upper() == tipo_str:
+                                tipo_contacto = tipo
+                                break
+                        
+                        if not tipo_contacto:
+                            errores.append(f"Fila {idx+2}: Tipo '{tipo_str}' no válido")
+                            continue
+                        
+                        # Validar industria si es cliente
+                        industria = None
+                        if tipo_contacto == TipoContacto.CLIENTE and 'Industria' in row:
+                            industria_str = str(row['Industria']).upper()
+                            for ind in Industria:
+                                if ind.value.upper() == industria_str:
+                                    industria = ind
+                                    break
+                        
+                        # Crear contacto
+                        contacto_service.crear_contacto(
+                            nombre=str(row['Nombre']),
+                            tipo=tipo_contacto,
+                            pais=str(row.get('Pais', '')),
+                            provincia=str(row.get('Provincia', '')),
+                            email=str(row.get('Email', '')),
+                            telefono=str(row.get('Telefono', '')),
+                            razon_social=str(row.get('Razon_Social', '')),
+                            direccion_fiscal=str(row.get('Direccion_Fiscal', '')),
+                            numero_identificacion_fiscal=str(row.get('ID_Fiscal', '')),
+                            industria=industria
+                        )
+                        procesados += 1
+                        
+                    except Exception as e:
+                        errores.append(f"Fila {idx+2}: {str(e)}")
+                
+                if procesados > 0:
+                    st.success(f"✅ {procesados} contactos importados")
+                
+                if errores:
+                    st.error(f"❌ {len(errores)} errores:")
+                    for error in errores[:5]:
+                        st.write(f"- {error}")
+                        
+        except Exception as e:
+            st.error(f"Error al leer archivo: {str(e)}")
