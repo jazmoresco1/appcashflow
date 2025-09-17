@@ -899,6 +899,67 @@ def show_contactos():
             
             df = pd.DataFrame(data)
             st.dataframe(df, use_container_width=True)
+            
+            # Sección de borrado
+            st.markdown("---")
+            st.subheader("🗑️ Borrar Contacto")
+            
+            # Separar contactos con y sin operaciones
+            contactos_sin_ops = []
+            contactos_con_ops = []
+            
+            for contacto in contactos:
+                tiene_ops = (
+                    len(contacto.operaciones_proveedor) > 0 or
+                    len(contacto.operaciones_cliente) > 0 or
+                    len(contacto.operaciones_agente) > 0
+                )
+                
+                if tiene_ops:
+                    contactos_con_ops.append(contacto)
+                else:
+                    contactos_sin_ops.append(contacto)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.info(f"✅ **Contactos sin operaciones:** {len(contactos_sin_ops)} (seguros para borrar)")
+                
+                if contactos_sin_ops:
+                    contacto_a_borrar = st.selectbox(
+                        "Seleccionar contacto a borrar:",
+                        options=[None] + contactos_sin_ops,
+                        format_func=lambda x: "Seleccionar..." if x is None else f"{x.nombre} ({x.tipo.value})",
+                        key="contacto_borrar"
+                    )
+                    
+                    if contacto_a_borrar:
+                        st.warning(f"⚠️ ¿Estás seguro de borrar a **{contacto_a_borrar.nombre}**?")
+                        
+                        if st.button("🗑️ Confirmar Borrado", type="primary", key="confirmar_borrar"):
+                            try:
+                                db.delete(contacto_a_borrar)
+                                db.commit()
+                                st.success(f"✅ Contacto '{contacto_a_borrar.nombre}' borrado exitosamente")
+                                st.rerun()
+                            except Exception as e:
+                                db.rollback()
+                                st.error(f"❌ Error al borrar contacto: {str(e)}")
+            
+            with col2:
+                st.warning(f"⚠️ **Contactos con operaciones:** {len(contactos_con_ops)} (no se pueden borrar)")
+                
+                if contactos_con_ops:
+                    st.write("**Contactos que NO se pueden borrar:**")
+                    for contacto in contactos_con_ops:
+                        total_ops = (
+                            len(contacto.operaciones_proveedor) + 
+                            len(contacto.operaciones_cliente) + 
+                            len(contacto.operaciones_agente)
+                        )
+                        st.write(f"- {contacto.nombre}: {total_ops} operacion(es)")
+                    
+                    st.info("💡 **Tip:** Para borrar estos contactos, primero debes borrar todas sus operaciones relacionadas desde 'Borrar Registros'.")
         else:
             st.info("No hay contactos registrados.")
     
