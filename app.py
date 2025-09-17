@@ -8,7 +8,8 @@ from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 from models import (
     init_database, get_db, TipoContacto, Industria, IncotermCompra, 
-    IncotermVenta, EstadoOperacion, TipoMovimiento, EstadoPago, TipoPago
+    IncotermVenta, EstadoOperacion, TipoMovimiento, EstadoPago, TipoPago,
+    Contacto
 )
 from database import (
     ContactoService, OperacionService, MovimientoFinancieroService, 
@@ -938,12 +939,28 @@ def show_contactos():
                         
                         if st.button("🗑️ Confirmar Borrado", type="primary", key="confirmar_borrar"):
                             try:
-                                db.delete(contacto_a_borrar)
-                                db.commit()
-                                st.success(f"✅ Contacto '{contacto_a_borrar.nombre}' borrado exitosamente")
-                                st.rerun()
+                                # Obtener el contacto fresco de la base de datos
+                                contacto_id = contacto_a_borrar.id
+                                contacto_nombre = contacto_a_borrar.nombre
+                                
+                                # Crear una nueva sesión para evitar conflictos
+                                db_fresh = next(get_db())
+                                
+                                contacto_fresh = db_fresh.query(Contacto).filter(Contacto.id == contacto_id).first()
+                                
+                                if contacto_fresh:
+                                    db_fresh.delete(contacto_fresh)
+                                    db_fresh.commit()
+                                    st.success(f"✅ Contacto '{contacto_nombre}' borrado exitosamente")
+                                    db_fresh.close()
+                                    st.rerun()
+                                else:
+                                    st.error("❌ El contacto ya no existe")
+                                    
                             except Exception as e:
-                                db.rollback()
+                                if 'db_fresh' in locals():
+                                    db_fresh.rollback()
+                                    db_fresh.close()
                                 st.error(f"❌ Error al borrar contacto: {str(e)}")
             
             with col2:
